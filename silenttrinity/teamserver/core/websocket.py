@@ -1,110 +1,92 @@
 import asyncio
-import websockets
 import json
-import logging
+import websockets
 from django.conf import settings
-from teamserver.models import TeamServerUser, Session
 from teamserver.core.utils.crypto import CryptoManager
-from django.utils import timezone
-from teamserver.models import SessionLog
 
-logger = logging.getLogger('teamserver.websocket')
-
-class WebSocketServer:
-    def __init__(self):
-        self.clients = {}  # Store active client connections
+class C2Server:
+    def __init__(self, host='0.0.0.0', port=5000):
+        self.host = host
+        self.port = port
         self.crypto = CryptoManager()
+        self.sessions = {}  # Store active sessions
+        self.handlers = {}  # Message handlers
         
-    async def authenticate_client(self, websocket, path):
-        """Authenticate incoming WebSocket connection"""
+    async def handle_client(self, websocket, path):
+        """Handle individual client connections"""
+        session_id = None
         try:
-            auth_message = await websocket.recv()
-            auth_data = json.loads(auth_message)
+            # Initial key exchange
+            client_hello = await websocket.recv()
+            client_hello = json.loads(client_hello)
             
-            token = auth_data.get('token')
-            if not token:
-                await websocket.send(json.dumps({'error': 'No authentication token provided'}))
-                return False
-                
-            try:
-                user = TeamServerUser.objects.get(auth_tokens__token=token, auth_tokens__is_valid=True)
-                return user
-            except TeamServerUser.DoesNotExist:
-                await websocket.send(json.dumps({'error': 'Invalid token'}))
-                return False
-                
-        except json.JSONDecodeError:
-            await websocket.send(json.dumps({'error': 'Invalid message format'}))
-            return False
-        except Exception as e:
-            logger.error(f'Authentication error: {str(e)}')
-            await websocket.send(json.dumps({'error': 'Authentication failed'}))
-            return False
+            # Generate and send server public key
+            server_public_key = self.crypto.get_public_key()
+            await websocket.send(json.dumps({
+                'type': 'key_exchange',
+                'public_key': server_public_key.decode()
+            }))
             
-    async def handle_client_message(self, websocket, user, message):
-        """Handle incoming messages from authenticated clients"""
-        try:
-            data = json.loads(message)
-            message_type = data.get('type')
+            # Receive encrypted session key
+            encrypted_key = await websocket.recv()
+            encrypted_key = json.loads(encrypted_key)
+            session_key = self.crypto.decrypt_session_key(encrypted_key['session_key'])
             
-            if message_type == 'checkin':
-                session_id = data.get('session_id')
-                try:
-                    session = Session.objects.get(id=session_id)
-                    session.last_checkin = timezone.now()
-                    session.save()
-                    await websocket.send(json.dumps({'type': 'checkin_ack'}))
-                except Session.DoesNotExist:
-                    await websocket.send(json.dumps({'error': 'Invalid session'}))
-                    
-            elif message_type == 'command_result':
-                session_id = data.get('session_id')
-                result = data.get('result')
-                
-                try:
-                    session = Session.objects.get(id=session_id)
-                    SessionLog.objects.create(
-                        session=session,
-                        type='command_result',
-                        content=result
-                    )
-                    await websocket.send(json.dumps({'type': 'result_received'}))
-                except Session.DoesNotExist:
-                    await websocket.send(json.dumps({'error': 'Invalid session'}))
-                    
-            else:
-                await websocket.send(json.dumps({'error': 'Unknown message type'}))
-                
-        except json.JSONDecodeError:
-            await websocket.send(json.dumps({'error': 'Invalid message format'}))
-        except Exception as e:
-            logger.error(f'Message handling error: {str(e)}')
-            await websocket.send(json.dumps({'error': 'Message handling failed'}))
+            # Create session
+            session_id = self.crypto.generate_nonce()
+            self.sessions[session_id] = {
+                'websocket': websocket,
+                'crypto': CryptoManager(),
+                'info': {}
+            }
             
-    async def handler(self, websocket, path):
-        """Main WebSocket connection handler"""
-        user = await self.authenticate_client(websocket, path)
-        if not user:
-            return
+            # Send session confirmation
+            await websocket.send(json.dumps({
+                'type': 'session_established',
+                'session_id': session_id
+            }))
             
-        self.clients[user.id] = websocket
-        
-        try:
+            # Main message handling loop
             async for message in websocket:
-                await self.handle_client_message(websocket, user, message)
+                try:
+                    # Decrypt and parse message
+                    decrypted = self.sessions[session_id]['crypto'].decrypt(message)
+                    data = json.loads(decrypted)
+                    
+                    # Handle message based on type
+                    if data['type'] in self.handlers:
+                        response = await self.handlers[data['type']](data, session_id)
+                        if response:
+                            # Encrypt and send response
+                            encrypted = self.sessions[session_id]['crypto'].encrypt(
+                                json.dumps(response).encode()
+                            )
+                            await websocket.send(encrypted)
+                            
+                except Exception as e:
+                    print(f"Error handling message: {str(e)}")
+                    
         except websockets.exceptions.ConnectionClosed:
-            logger.info(f'Client disconnected: {user.username}')
+            print(f"Client disconnected")
         finally:
-            if user.id in self.clients:
-                del self.clients[user.id]
-                
-    async def start(self, host='0.0.0.0', port=5000, ssl_context=None):
+            if session_id and session_id in self.sessions:
+                del self.sessions[session_id]
+    
+    def register_handler(self, msg_type, handler):
+        """Register message handlers"""
+        self.handlers[msg_type] = handler
+    
+    async def start(self):
         """Start the WebSocket server"""
-        server = await websockets.serve(
-            self.handler,
-            host,
-            port,
-            ssl=ssl_context
-        )
-        logger.info(f'WebSocket server started on {host}:{port}')
-        await server.wait_closed()
+        async with websockets.serve(self.handle_client, self.host, self.port):
+            print(f"C2 Server listening on ws://{self.host}:{self.port}")
+            await asyncio.Future()  # run forever
+
+    async def broadcast(self, message):
+        """Broadcast message to all connected clients"""
+        for session_id, session in self.sessions.items():
+            try:
+                encrypted = session['crypto'].encrypt(json.dumps(message).encode())
+                await session['websocket'].send(encrypted)
+            except Exception as e:
+                print(f"Error broadcasting to {session_id}: {str(e)}")
