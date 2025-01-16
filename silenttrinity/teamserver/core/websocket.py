@@ -1,14 +1,11 @@
-
 # silenttrinity/silenttrinity/teamserver/core/websocket.py
-
-# teamserver/core/websocket.py
 
 import asyncio
 import json
 import websockets
 from datetime import datetime
 from teamserver.core.utils.crypto import CryptoManager
-from teamserver.core.utils.logger import C2Logger
+from teamserver.core.utils.logger import StructuredLogger
 
 class C2Server:
     def __init__(self, host='0.0.0.0', port=5000):
@@ -17,19 +14,29 @@ class C2Server:
         self.crypto = CryptoManager()
         self.sessions = {}
         self.handlers = {}
-        self.logger = C2Logger()
+        self.logger = StructuredLogger('C2Server')
+        self.logger.debug(f"C2Server initialized with host={self.host}, port={self.port}")
         
     async def handle_client(self, websocket, path):
         session_id = None
         client_address = websocket.remote_address
+        client_id = id(websocket)
         
         try:
-            self.logger.client_connect(id(websocket), client_address)
+            self.logger.client_connect(client_id, client_address, 
+                                     metadata={"path": path})
             
             # Initial key exchange
-            self.logger.key_exchange(id(websocket))
+            self.logger.key_exchange(client_id, 
+                                   metadata={"stage": "initiation"})
             client_hello = await websocket.recv()
             client_hello = json.loads(client_hello)
+            
+            self.logger.crypto_operation(
+                "generate_server_keypair",
+                "success",
+                metadata={"client_id": client_id}
+            )
             
             # Generate and send server public key
             server_public_key = self.crypto.get_public_key()
@@ -38,10 +45,11 @@ class C2Server:
                 'public_key': server_public_key.decode()
             }))
             
-            # Receive encrypted session key
-            encrypted_key = await websocket.recv()
-            encrypted_key = json.loads(encrypted_key)
-            session_key = self.crypto.decrypt_session_key(encrypted_key['session_key'])
+            self.logger.crypto_operation(
+                "key_exchange",
+                "completed",
+                metadata={"client_id": client_id}
+            )
             
             # Create session
             session_id = self.crypto.generate_nonce()
@@ -55,7 +63,13 @@ class C2Server:
                 }
             }
             
-            self.logger.session_established(session_id)
+            self.logger.session_established(
+                session_id,
+                metadata={
+                    "client_id": client_id,
+                    "address": client_address
+                }
+            )
             
             # Send session confirmation
             await websocket.send(json.dumps({
@@ -66,7 +80,7 @@ class C2Server:
             # Main message handling loop
             async for message in websocket:
                 try:
-                    # Update last active timestamp
+                    # Update session activity
                     self.sessions[session_id]['info']['last_active'] = datetime.now().isoformat()
                     
                     # Decrypt and parse message
@@ -87,16 +101,36 @@ class C2Server:
                             self.logger.command_executed(session_id, data['type'])
                             
                 except Exception as e:
-                    self.logger.error(f"Error handling message: {str(e)}", exc_info=True)
+                    self.logger.error(
+                        f"Error handling message: {str(e)}", 
+                        exc_info=True,
+                        metadata={
+                            "session_id": session_id,
+                            "message_type": data.get('type') if 'data' in locals() else None
+                        }
+                    )
                     
         except websockets.exceptions.ConnectionClosed:
-            self.logger.client_disconnect(id(websocket))
+            self.logger.client_disconnect(
+                client_id,
+                metadata={"session_id": session_id}
+            )
         except Exception as e:
-            self.logger.critical(f"Critical error in client handler: {str(e)}", exc_info=True)
+            self.logger.critical(
+                "Critical server error",
+                exc_info=e,
+                metadata={
+                    "client_id": client_id,
+                    "session_id": session_id
+                }
+            )
         finally:
             if session_id and session_id in self.sessions:
                 del self.sessions[session_id]
-                self.logger.debug(f"Session cleaned up [Session: {session_id}]")
+                self.logger.debug(
+                    "Session cleanup completed",
+                    metadata={"session_id": session_id}
+                )
     
     def register_handler(self, msg_type, handler):
         """Register message handlers"""
@@ -105,16 +139,33 @@ class C2Server:
     
     async def start(self):
         """Start the WebSocket server"""
-        self.logger.server_start(self.host, self.port)
+        self.logger.server_start(
+            self.host,
+            self.port,
+            metadata={
+                "server_version": "1.0.0",
+                "crypto_provider": self.crypto.__class__.__name__
+            }
+        )
         
         try:
             async with websockets.serve(self.handle_client, self.host, self.port):
-                self.logger.info("Server is ready for connections")
+                self.logger.info(
+                    "Server ready",
+                    metadata={"status": "running"}
+                )
                 await asyncio.Future()  # run forever
         except Exception as e:
-            self.logger.critical(f"Failed to start server: {str(e)}", exc_info=True)
+            self.logger.critical(
+                "Server startup failed",
+                exc_info=e,
+                metadata={
+                    "host": self.host,
+                    "port": self.port
+                }
+            )
             raise
-
+    
     async def broadcast(self, message):
         """Broadcast message to all connected clients"""
         self.logger.debug(f"Broadcasting message to {len(self.sessions)} clients")

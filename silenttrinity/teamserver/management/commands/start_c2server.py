@@ -4,7 +4,7 @@ from django.core.management.base import BaseCommand
 import asyncio
 from teamserver.core.websocket import C2Server
 from teamserver.core.handlers import MessageHandlers
-from teamserver.core.utils.logger import C2Logger
+from teamserver.core.utils.logger import StructuredLogger
 import platform
 import psutil
 import sys
@@ -14,7 +14,7 @@ class Command(BaseCommand):
     
     def __init__(self):
         super().__init__()
-        self.logger = C2Logger('C2Management')
+        self.logger = StructuredLogger('C2Management')
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -31,15 +31,15 @@ class Command(BaseCommand):
 
     def log_system_info(self):
         """Log system information at startup"""
-        self.logger.logger.info("="*50)
-        self.logger.logger.info("System Information")
-        self.logger.logger.info("="*50)
-        self.logger.logger.info(f"OS: {platform.system()} {platform.release()}")
-        self.logger.logger.info(f"Python Version: {sys.version.split()[0]}")
-        self.logger.logger.info(f"CPU Cores: {psutil.cpu_count()}")
+        self.logger.info("="*50)
+        self.logger.info("System Information")
+        self.logger.info("="*50)
+        self.logger.info(f"OS: {platform.system()} {platform.release()}")
+        self.logger.info(f"Python Version: {sys.version.split()[0]}")
+        self.logger.info(f"CPU Cores: {psutil.cpu_count(logical=True)}")
         memory = psutil.virtual_memory()
-        self.logger.logger.info(f"Memory: {memory.total // (1024*1024*1024)}GB Total, {memory.percent}% Used")
-        self.logger.logger.info("="*50)
+        self.logger.info(f"Memory: {memory.total // (1024*1024*1024)}GB Total, {memory.percent}% Used")
+        self.logger.info("="*50)
 
     def handle(self, *args, **options):
         # Log system information
@@ -58,8 +58,8 @@ class Command(BaseCommand):
         try:
             asyncio.run(server.start())
         except KeyboardInterrupt:
-            self.logger.logger.info("Server shutdown initiated by user")
+            self.logger.info("Server shutdown initiated by user")
             self.stdout.write(self.style.SUCCESS('Server stopped'))
         except Exception as e:
-            self.logger.logger.critical(f"Server crashed: {str(e)}", exc_info=True)
+            self.logger.critical(f"Server crashed: {str(e)}", exc_info=True)
             self.stdout.write(self.style.ERROR(f'Server error: {str(e)}'))
