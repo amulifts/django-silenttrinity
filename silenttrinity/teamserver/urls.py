@@ -4,9 +4,8 @@ from . import views
 app_name = 'teamserver'
 
 urlpatterns = [
-    path('auth/register/', views.register, name='register'),
-    path('auth/login/', views.login, name='login'),
-    path('auth/logout/', views.logout, name='logout'),
-    path('user/info/', views.user_info, name='user_info'),
-    path('users/', views.list_users, name='list_users'),
+    path('login/', views.login_view, name='login'),
+    path('logout/', views.logout_view, name='logout'),
+    path('sessions/', views.sessions_view, name='sessions'),
+    path('users/', views.users_view, name='users'),
 ]

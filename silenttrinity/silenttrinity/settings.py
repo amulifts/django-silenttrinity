@@ -38,7 +38,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
 
-    'teamserver.apps.TeamserverConfig',
+    'teamserver',
 ]
 
 MIDDLEWARE = [
@@ -128,5 +128,21 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 WEBSOCKET_HOST = '0.0.0.0'
 WEBSOCKET_PORT = 5000
 
+# Custom user model
+AUTH_USER_MODEL = 'teamserver.TeamServerUser'
+
+# Add teamserver to INSTALLED_APPS
+if 'teamserver' not in INSTALLED_APPS:
+    INSTALLED_APPS.append('teamserver')
+
 # Token expiration time in hours
 TOKEN_EXPIRATION_HOURS = 24
+
+# TeamServer settings
+TEAMSERVER = {
+    'HOST': '0.0.0.0',
+    'PORT': 5000,
+    'SSL': False,
+    'CERT_PATH': None,
+    'KEY_PATH': None,
+}

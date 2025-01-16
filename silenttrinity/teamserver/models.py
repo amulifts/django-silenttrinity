@@ -4,82 +4,44 @@ from django.utils import timezone
 import uuid
 
 class TeamServerUser(AbstractUser):
-    """
-    Custom user model for TeamServer authentication
-    """
+    """Custom user model for TeamServer"""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    api_token = models.UUIDField(default=uuid.uuid4, unique=True)
-    last_login_ip = models.GenericIPAddressField(null=True, blank=True)
-    last_login_time = models.DateTimeField(default=timezone.now)
-    is_teamserver_admin = models.BooleanField(default=False)
-    
-    class Meta:
-        db_table = 'teamserver_users'
-        
-class AuthToken(models.Model):
-    """
-    Authentication tokens for API access
-    """
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    user = models.ForeignKey(TeamServerUser, on_delete=models.CASCADE, related_name='auth_tokens')
-    token = models.UUIDField(default=uuid.uuid4, unique=True)
     created_at = models.DateTimeField(auto_now_add=True)
-    expires_at = models.DateTimeField()
-    is_valid = models.BooleanField(default=True)
-    last_used_at = models.DateTimeField(null=True)
-    last_used_ip = models.GenericIPAddressField(null=True)
-    
-    class Meta:
-        db_table = 'teamserver_auth_tokens'
-        
-    def is_expired(self):
-        return timezone.now() > self.expires_at
-        
-    def invalidate(self):
-        self.is_valid = False
-        self.save()
-        
-class LoginAttempt(models.Model):
-    """
-    Track login attempts for rate limiting and security
-    """
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    username = models.CharField(max_length=150)
-    ip_address = models.GenericIPAddressField()
-    user_agent = models.TextField(null=True)
-    timestamp = models.DateTimeField(auto_now_add=True)
-    success = models.BooleanField(default=False)
-    
-    class Meta:
-        db_table = 'teamserver_login_attempts'
+    updated_at = models.DateTimeField(auto_now=True)
 
 class Session(models.Model):
-    """
-    Active C2 sessions
-    """
+    """Model for tracking agent sessions"""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    user = models.ForeignKey(TeamServerUser, on_delete=models.CASCADE, related_name='sessions')
-    name = models.CharField(max_length=50)
+    user = models.ForeignKey(TeamServerUser, on_delete=models.CASCADE)
     hostname = models.CharField(max_length=255)
-    username = models.CharField(max_length=100)
-    operating_system = models.CharField(max_length=100)
-    ip_address = models.GenericIPAddressField()
-    last_checkin = models.DateTimeField(auto_now=True)
-    first_seen = models.DateTimeField(auto_now_add=True)
-    status = models.CharField(max_length=20, default='active')
-    
+    username = models.CharField(max_length=255)
+    os = models.CharField(max_length=50)
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_checkin = models.DateTimeField(default=timezone.now)
+    active = models.BooleanField(default=True)
+
     class Meta:
-        db_table = 'teamserver_sessions'
-        
+        ordering = ['-created_at']
+
 class SessionLog(models.Model):
-    """
-    Logs for session activity
-    """
+    """Model for session activity logging"""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    session = models.ForeignKey(Session, on_delete=models.CASCADE, related_name='logs')
-    timestamp = models.DateTimeField(auto_now_add=True)
-    type = models.CharField(max_length=50)  # command, response, error, etc.
+    session = models.ForeignKey(Session, on_delete=models.CASCADE)
+    type = models.CharField(max_length=50)
     content = models.TextField()
-    
+    created_at = models.DateTimeField(auto_now_add=True)
+
     class Meta:
-        db_table = 'teamserver_session_logs'
+        ordering = ['-created_at']
+
+class AuthToken(models.Model):
+    """Model for API authentication tokens"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(TeamServerUser, related_name='auth_tokens', on_delete=models.CASCADE)
+    token = models.CharField(max_length=255, unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField(null=True)
+    is_valid = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['-created_at']
