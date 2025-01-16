@@ -1,3 +1,5 @@
+# silenttrinity/silenttrinity/silenttrinity/settings.py
+
 """
 Django settings for silenttrinity project.
 

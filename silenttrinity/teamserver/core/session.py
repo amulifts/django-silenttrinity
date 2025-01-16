@@ -1,3 +1,5 @@
+# silenttrinity/silenttrinity/teamserver/core/session.py
+
 from datetime import datetime, timedelta
 import json
 

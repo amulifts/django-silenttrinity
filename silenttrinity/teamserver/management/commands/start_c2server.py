@@ -1,3 +1,5 @@
+# silenttrinity/silenttrinity/teamserver/management/commands/start_c2server.py
+
 from django.core.management.base import BaseCommand
 import asyncio
 from teamserver.core.websocket import C2Server

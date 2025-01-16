@@ -1,3 +1,5 @@
+# silenttrinity/silenttrinity/silenttrinity/urls.py
+
 """
 URL configuration for silenttrinity project.
 

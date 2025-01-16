@@ -1,3 +1,5 @@
+# silenttrinity/silenttrinity/teamserver/core/utils/decorators.py
+
 from functools import wraps
 from django.http import JsonResponse
 from django.core.exceptions import PermissionDenied

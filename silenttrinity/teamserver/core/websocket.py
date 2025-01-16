@@ -1,3 +1,6 @@
+
+# silenttrinity/silenttrinity/teamserver/core/websocket.py
+
 import asyncio
 import json
 import websockets
