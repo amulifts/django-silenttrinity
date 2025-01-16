@@ -1,179 +1,141 @@
 # silenttrinity/silenttrinity/teamserver/core/websocket.py
 
 import asyncio
-import json
 import websockets
+import json
+import base64
+import os
+import uuid
 from datetime import datetime
-from teamserver.core.utils.crypto import CryptoManager
-from teamserver.core.utils.logger import StructuredLogger
+from cryptography.hazmat.primitives import serialization, hashes
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-class C2Server:
-    def __init__(self, host='0.0.0.0', port=5000):
+class SecureWebSocketServer:
+    def __init__(self, host='0.0.0.0', port=8765, ipc_server=None):
+        """Initialize the WebSocket server with AES-GCM encryption"""
         self.host = host
         self.port = port
-        self.crypto = CryptoManager()
-        self.sessions = {}
-        self.handlers = {}
-        self.logger = StructuredLogger('C2Server')
-        self.logger.debug(f"C2Server initialized with host={self.host}, port={self.port}")
+        self.clients = {}
+        self.ipc_server = ipc_server  # Could be None if not using IPC
         
     async def handle_client(self, websocket, path):
-        session_id = None
-        client_address = websocket.remote_address
-        client_id = id(websocket)
+        client_id = str(uuid.uuid4())
+        encryption_key = None
         
         try:
-            self.logger.client_connect(client_id, client_address, 
-                                     metadata={"path": path})
+            # ECDH key exchange
+            server_private_key = ec.generate_private_key(ec.SECP384R1())
+            server_public_key = server_private_key.public_key()
             
-            # Initial key exchange
-            self.logger.key_exchange(client_id, 
-                                   metadata={"stage": "initiation"})
-            client_hello = await websocket.recv()
-            client_hello = json.loads(client_hello)
-            
-            self.logger.crypto_operation(
-                "generate_server_keypair",
-                "success",
-                metadata={"client_id": client_id}
+            # Send server's public key
+            server_public_bytes = server_public_key.public_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PublicFormat.SubjectPublicKeyInfo
             )
-            
-            # Generate and send server public key
-            server_public_key = self.crypto.get_public_key()
             await websocket.send(json.dumps({
                 'type': 'key_exchange',
-                'public_key': server_public_key.decode()
+                'public_key': base64.b64encode(server_public_bytes).decode()
             }))
             
-            self.logger.crypto_operation(
-                "key_exchange",
-                "completed",
-                metadata={"client_id": client_id}
-            )
+            # Receive client's public key
+            client_data = await websocket.recv()
+            client_msg = json.loads(client_data)
+            if client_msg.get('type') != 'key_exchange':
+                raise ValueError("Expected key_exchange message")
             
-            # Create session
-            session_id = self.crypto.generate_nonce()
-            self.sessions[session_id] = {
+            client_public_bytes = base64.b64decode(client_msg['public_key'])
+            client_public_key = serialization.load_pem_public_key(client_public_bytes)
+            
+            shared_key = server_private_key.exchange(ec.ECDH(), client_public_key)
+            kdf = HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=b'handshake data')
+            encryption_key = kdf.derive(shared_key)
+            
+            self.clients[client_id] = {
                 'websocket': websocket,
-                'crypto': CryptoManager(),
-                'info': {
-                    'address': client_address,
-                    'connected_at': datetime.now().isoformat(),
-                    'last_active': datetime.now().isoformat()
-                }
+                'key': encryption_key,
+                'connected_at': datetime.now().isoformat()
             }
             
-            self.logger.session_established(
-                session_id,
-                metadata={
-                    "client_id": client_id,
-                    "address": client_address
-                }
-            )
+            # Notify IPC if available
+            if self.ipc_server:
+                await self.ipc_server.publish(b'client_connected', {
+                    'client_id': client_id,
+                    'timestamp': datetime.now().isoformat()
+                })
             
-            # Send session confirmation
-            await websocket.send(json.dumps({
-                'type': 'session_established',
-                'session_id': session_id
-            }))
-            
-            # Main message handling loop
-            async for message in websocket:
+            while True:
+                message = await websocket.recv()
+                decrypted = self.decrypt_message(message, encryption_key)
+                
+                # Attempt to parse JSON
                 try:
-                    # Update session activity
-                    self.sessions[session_id]['info']['last_active'] = datetime.now().isoformat()
-                    
-                    # Decrypt and parse message
-                    decrypted = self.sessions[session_id]['crypto'].decrypt(message)
-                    data = json.loads(decrypted)
-                    
-                    self.logger.debug(f"Received message type: {data.get('type')} [Session: {session_id}]")
-                    
-                    # Handle message based on type
-                    if data['type'] in self.handlers:
-                        response = await self.handlers[data['type']](data, session_id)
-                        if response:
-                            # Encrypt and send response
-                            encrypted = self.sessions[session_id]['crypto'].encrypt(
-                                json.dumps(response).encode()
-                            )
-                            await websocket.send(encrypted)
-                            self.logger.command_executed(session_id, data['type'])
-                            
-                except Exception as e:
-                    self.logger.error(
-                        f"Error handling message: {str(e)}", 
-                        exc_info=True,
-                        metadata={
-                            "session_id": session_id,
-                            "message_type": data.get('type') if 'data' in locals() else None
-                        }
-                    )
-                    
+                    msg_data = json.loads(decrypted)
+                except json.JSONDecodeError:
+                    await websocket.send(self.encrypt_message(json.dumps({
+                        'type': 'error',
+                        'message': 'Invalid JSON format'
+                    }), encryption_key))
+                    continue
+                
+                # Process message
+                response = await self.process_message(msg_data, client_id)
+                encrypted = self.encrypt_message(response, encryption_key)
+                await websocket.send(encrypted)
+                
         except websockets.exceptions.ConnectionClosed:
-            self.logger.client_disconnect(
-                client_id,
-                metadata={"session_id": session_id}
-            )
+            pass
         except Exception as e:
-            self.logger.critical(
-                "Critical server error",
-                exc_info=e,
-                metadata={
-                    "client_id": client_id,
-                    "session_id": session_id
-                }
-            )
+            # Enhanced error handling
+            error_msg = f"Error with client {client_id}: {str(e)}"
+            print(error_msg)
         finally:
-            if session_id and session_id in self.sessions:
-                del self.sessions[session_id]
-                self.logger.debug(
-                    "Session cleanup completed",
-                    metadata={"session_id": session_id}
-                )
+            if client_id in self.clients:
+                del self.clients[client_id]
+                if self.ipc_server:
+                    await self.ipc_server.publish(b'client_disconnected', {
+                        'client_id': client_id,
+                        'timestamp': datetime.now().isoformat()
+                    })
     
-    def register_handler(self, msg_type, handler):
-        """Register message handlers"""
-        self.logger.debug(f"Registered handler for message type: {msg_type}")
-        self.handlers[msg_type] = handler
+    def encrypt_message(self, plaintext, key):
+        aesgcm = AESGCM(key)
+        nonce = os.urandom(12)
+        if isinstance(plaintext, str):
+            plaintext = plaintext.encode()
+        ciphertext = aesgcm.encrypt(nonce, plaintext, None)
+        return base64.b64encode(nonce + ciphertext).decode()
+    
+    def decrypt_message(self, encrypted_data, key):
+        aesgcm = AESGCM(key)
+        data = base64.b64decode(encrypted_data)
+        nonce = data[:12]
+        ciphertext = data[12:]
+        return aesgcm.decrypt(nonce, ciphertext, None)
+    
+    async def process_message(self, msg_data, client_id):
+        # Basic message router for demonstration
+        if msg_data.get('type') == 'command_result':
+            return json.dumps({
+                'type': 'ack',
+                'status': 'success',
+                'message': 'Result received'
+            })
+        else:
+            return json.dumps({
+                'type': 'error',
+                'message': f"Unknown message type: {msg_data.get('type')}"
+            })
     
     async def start(self):
-        """Start the WebSocket server"""
-        self.logger.server_start(
-            self.host,
-            self.port,
-            metadata={
-                "server_version": "1.0.0",
-                "crypto_provider": self.crypto.__class__.__name__
-            }
-        )
-        
-        try:
-            async with websockets.serve(self.handle_client, self.host, self.port):
-                self.logger.info(
-                    "Server ready",
-                    metadata={"status": "running"}
-                )
-                await asyncio.Future()  # run forever
-        except Exception as e:
-            self.logger.critical(
-                "Server startup failed",
-                exc_info=e,
-                metadata={
-                    "host": self.host,
-                    "port": self.port
-                }
-            )
-            raise
+        print(f"WebSocket server starting on ws://{self.host}:{self.port}")
+        async with websockets.serve(self.handle_client, self.host, self.port):
+            await asyncio.Future()  # run forever
     
-    async def broadcast(self, message):
-        """Broadcast message to all connected clients"""
-        self.logger.debug(f"Broadcasting message to {len(self.sessions)} clients")
-        
-        for session_id, session in self.sessions.items():
-            try:
-                encrypted = session['crypto'].encrypt(json.dumps(message).encode())
-                await session['websocket'].send(encrypted)
-                self.logger.debug(f"Broadcast message sent to session {session_id}")
-            except Exception as e:
-                self.logger.error(f"Error broadcasting to session {session_id}: {str(e)}")
+    async def stop(self):
+        # For a graceful shutdown, if needed
+        print("Stopping SecureWebSocketServer...")
+        # websockets.serve doesn't expose a direct shutdown, so we rely on tasks cancellation
+        await asyncio.sleep(0.5)
+

@@ -148,3 +148,37 @@ TEAMSERVER = {
     'CERT_PATH': None,
     'KEY_PATH': None,
 }
+
+import os
+
+C2_LOG_DIR = os.path.join(BASE_DIR, 'silenttrinity', 'silenttrinity', 'logs')
+
+# Set the environment variable
+os.environ['C2_LOG_DIR'] = C2_LOG_DIR
+
+# Ensure the directory exists
+os.makedirs(C2_LOG_DIR, exist_ok=True)
+
+import zmq
+
+# Define a function to generate keys
+def generate_zmq_keys():
+    """Generate a CurveZMQ key pair and return the public and secret keys."""
+    public_key, secret_key = zmq.curve_keypair()
+    return public_key.decode(), secret_key.decode()
+
+# Check if ZMQ keys are already set in the environment
+ZMQ_SERVER_PUBLIC_KEY = os.getenv('ZMQ_SERVER_PUBLIC_KEY')
+ZMQ_SERVER_SECRET_KEY = os.getenv('ZMQ_SERVER_SECRET_KEY')
+
+if not ZMQ_SERVER_PUBLIC_KEY or not ZMQ_SERVER_SECRET_KEY:
+    # Generate new keys if not already set
+    ZMQ_SERVER_PUBLIC_KEY, ZMQ_SERVER_SECRET_KEY = generate_zmq_keys()
+
+    # Optionally save the generated keys to environment variables for future use
+    os.environ['ZMQ_SERVER_PUBLIC_KEY'] = ZMQ_SERVER_PUBLIC_KEY
+    os.environ['ZMQ_SERVER_SECRET_KEY'] = ZMQ_SERVER_SECRET_KEY
+
+# Log the keys (for debugging only; avoid in production)
+print(f"ZMQ_SERVER_PUBLIC_KEY: {ZMQ_SERVER_PUBLIC_KEY}")
+print(f"ZMQ_SERVER_SECRET_KEY: {ZMQ_SERVER_SECRET_KEY}")

@@ -10,60 +10,66 @@ import platform
 import uuid
 import traceback
 import json
+import os
 from pythonjsonlogger import jsonlogger
 import coloredlogs
+
+SENSITIVE_FIELDS = ["SECRET_KEY", "PASSWORD", "PRIVATE_KEY", "TOKEN"]
+
+def redact_sensitive_data(record):
+    """Mask sensitive data in log messages."""
+    message = record.getMessage()
+    for field in SENSITIVE_FIELDS:
+        if field in message:
+            message = message.replace(field, "[REDACTED]")
+    record.msg = message
+    return True
 
 class JSONFormatter(jsonlogger.JsonFormatter):
     """Custom JSON formatter for structured logging."""
     
     def __init__(self):
-        # Define the JSON format with desired fields
         super().__init__('%(asctime)s %(levelname)s %(name)s %(message)s')
         self.hostname = socket.gethostname()
         self.username = getpass.getuser()
     
     def add_fields(self, log_record, record, message_dict):
-        """Add additional fields to the log record."""
         super(JSONFormatter, self).add_fields(log_record, record, message_dict)
         log_record['hostname'] = self.hostname
         log_record['username'] = self.username
-        # Add more fields as needed
 
 class StructuredLogger:
-    """Advanced structured logger with JSON output for files and colored output for console."""
+    """Advanced structured logger with JSON output for files and colored console logs."""
     
     def __init__(self, name='C2Server'):
         self.logger = logging.getLogger(name)
+        
+        # Read log directory from environment or use default
+        self.log_directory = os.getenv('C2_LOG_DIR', 'logs')
+        
         self.setup_logging()
         self.session_id = str(uuid.uuid4())
     
     def setup_logging(self):
-        """Configure JSON structured logging for file and colored logging for console."""
-        # Prevent log messages from being propagated to the root logger
         self.logger.propagate = False
         
-        # Avoid adding multiple handlers if the logger is instantiated multiple times
+        # Avoid adding multiple handlers
         if not self.logger.handlers:
-            # Create logs directory if it doesn't exist
-            log_dir = Path('logs')
+            # Create logs directory from config
+            log_dir = Path(self.log_directory)
             log_dir.mkdir(exist_ok=True)
             
-            # Generate log filename with timestamp
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             log_file = log_dir / f'c2_server_{timestamp}.json'
             
-            # Set up rotating JSON file handler
-            file_handler = RotatingFileHandler(log_file, maxBytes=5*1024*1024, backupCount=5)  # 5 MB per file
+            file_handler = RotatingFileHandler(log_file, maxBytes=5*1024*1024, backupCount=5)
             file_handler.setFormatter(JSONFormatter())
             file_handler.setLevel(logging.DEBUG)
             
-            # Set up console handler with coloredlogs
             console_handler = logging.StreamHandler()
             console_handler.setLevel(logging.DEBUG)
-            # Define a simple format for console
             console_format = '%(asctime)s - %(levelname)s - %(name)s - %(message)s'
             
-            # Install coloredlogs for the console handler
             coloredlogs.install(
                 level='DEBUG',
                 logger=self.logger,
@@ -78,16 +84,16 @@ class StructuredLogger:
                 }
             )
             
-            # Add file handler to the logger
+            # Add a filter to redact sensitive info
+            file_handler.addFilter(redact_sensitive_data)
+            console_handler.addFilter(redact_sensitive_data)
+            
             self.logger.addHandler(file_handler)
             
-            # No need to add console_handler explicitly as coloredlogs.install already configures it
-        
-            # Set the overall logging level
+            # coloredlogs.install already attaches console_handler internally
             self.logger.setLevel(logging.DEBUG)
     
     def _log(self, level, message, **kwargs):
-        """Generic logging method with extra fields."""
         extra = {
             "extra_fields": {
                 "session_id": self.session_id,
@@ -96,6 +102,9 @@ class StructuredLogger:
             }
         }
         self.logger.log(level, message, extra=extra)
+    
+    # Remainder of the StructuredLogger class stays the same, no changes needed
+    # except that the logger is now utilizing the filter for sensitive data.
     
     # Logging methods for specific events
     def server_start(self, host, port, **kwargs):
