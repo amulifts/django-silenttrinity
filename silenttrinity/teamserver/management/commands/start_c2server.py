@@ -4,9 +4,17 @@ from django.core.management.base import BaseCommand
 import asyncio
 from teamserver.core.websocket import C2Server
 from teamserver.core.handlers import MessageHandlers
+from teamserver.core.utils.logger import C2Logger
+import platform
+import psutil
+import sys
 
 class Command(BaseCommand):
     help = 'Start the C2 WebSocket server'
+    
+    def __init__(self):
+        super().__init__()
+        self.logger = C2Logger('C2Management')
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -21,7 +29,22 @@ class Command(BaseCommand):
             help='Port to bind the server to'
         )
 
+    def log_system_info(self):
+        """Log system information at startup"""
+        self.logger.logger.info("="*50)
+        self.logger.logger.info("System Information")
+        self.logger.logger.info("="*50)
+        self.logger.logger.info(f"OS: {platform.system()} {platform.release()}")
+        self.logger.logger.info(f"Python Version: {sys.version.split()[0]}")
+        self.logger.logger.info(f"CPU Cores: {psutil.cpu_count()}")
+        memory = psutil.virtual_memory()
+        self.logger.logger.info(f"Memory: {memory.total // (1024*1024*1024)}GB Total, {memory.percent}% Used")
+        self.logger.logger.info("="*50)
+
     def handle(self, *args, **options):
+        # Log system information
+        self.log_system_info()
+        
         # Create and configure server
         server = C2Server(
             host=options['host'],
@@ -35,4 +58,8 @@ class Command(BaseCommand):
         try:
             asyncio.run(server.start())
         except KeyboardInterrupt:
+            self.logger.logger.info("Server shutdown initiated by user")
             self.stdout.write(self.style.SUCCESS('Server stopped'))
+        except Exception as e:
+            self.logger.logger.critical(f"Server crashed: {str(e)}", exc_info=True)
+            self.stdout.write(self.style.ERROR(f'Server error: {str(e)}'))
