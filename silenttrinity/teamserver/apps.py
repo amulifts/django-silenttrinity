@@ -1,3 +1,5 @@
+# silenttrinity/silenttrinity/teamserver/apps.py
+
 from django.apps import AppConfig
 
 

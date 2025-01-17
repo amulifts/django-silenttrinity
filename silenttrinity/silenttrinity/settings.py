@@ -16,6 +16,7 @@ from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+# /home/parallels/Downloads/asilenttrinity/silenttrinity/silenttrinity
 
 
 # Quick-start development settings - unsuitable for production
@@ -180,5 +181,9 @@ if not ZMQ_SERVER_PUBLIC_KEY or not ZMQ_SERVER_SECRET_KEY:
     os.environ['ZMQ_SERVER_SECRET_KEY'] = ZMQ_SERVER_SECRET_KEY
 
 # Log the keys (for debugging only; avoid in production)
-print(f"ZMQ_SERVER_PUBLIC_KEY: {ZMQ_SERVER_PUBLIC_KEY}")
-print(f"ZMQ_SERVER_SECRET_KEY: {ZMQ_SERVER_SECRET_KEY}")
+# print(f"ZMQ_SERVER_PUBLIC_KEY: {ZMQ_SERVER_PUBLIC_KEY}")
+# print(f"ZMQ_SERVER_SECRET_KEY: {ZMQ_SERVER_SECRET_KEY}")
+
+# WebSocket TLS/SSL settings
+WEBSOCKET_CERT_PATH = os.path.join(BASE_DIR, 'silenttrinity', 'silenttrinity', 'server.crt')
+WEBSOCKET_KEY_PATH = os.path.join(BASE_DIR, 'silenttrinity', 'silenttrinity', 'server.key')

@@ -5,7 +5,7 @@ import asyncio
 from datetime import datetime
 from teamserver.core.utils.logger import StructuredLogger
 
-logger = StructuredLogger('MessageHandlers')
+logger = StructuredLogger('MessageHandlers').logger
 
 # A simple in-memory dictionary to store task results (for demonstration).
 TASK_RESULTS = {}
@@ -35,7 +35,7 @@ class MessageHandlers:
         # Validate inputs
         if not hostname or not username or not os_info:
             return {'type': 'error', 'message': 'Missing hostname, username, or os info'}
-    
+
         session = self.server.sessions.get(session_id)
         if session:
             session['info'].update({
@@ -48,7 +48,7 @@ class MessageHandlers:
         else:
             logger.error(f"Session {session_id} not found during checkin")
             return {'type': 'error', 'message': 'Session not found'}
-    
+
         return {
             'type': 'checkin_response',
             'status': 'success',
@@ -75,7 +75,7 @@ class MessageHandlers:
             'timestamp': datetime.now().isoformat()
         }
         logger.info(f"Received task_result from session {session_id}: task_id={task_id}, result={result}")
-    
+
         return {
             'type': 'task_result_response',
             'status': 'received',
@@ -92,7 +92,7 @@ class MessageHandlers:
             return {'type': 'error', 'message': 'Invalid error data'}
         
         logger.error(f"Error from session {session_id}: {error_type} - {error_msg}")
-    
+
         return {
             'type': 'error_response',
             'status': 'received'
